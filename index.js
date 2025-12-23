@@ -1,156 +1,259 @@
-const { 
-  Client, 
-  GatewayIntentBits, 
-  SlashCommandBuilder, 
-  PermissionsBitField 
-} = require("discord.js");
+// ======================
+// IMPORTS
+// ======================
+const {
+  Client,
+  GatewayIntentBits,
+  SlashCommandBuilder,
+  Routes,
+  EmbedBuilder
+} = require('discord.js');
+const { REST } = require('@discordjs/rest');
+const sqlite3 = require('sqlite3').verbose();
+const express = require('express');
 
-const sqlite3 = require("sqlite3").verbose();
+// ======================
+// EXPRESS (KEEP ALIVE)
+// ======================
+const app = express();
+const PORT = process.env.PORT || 5000;
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+app.get('/', (req, res) => res.send('Bot is alive'));
+app.listen(PORT, () => console.log(`Web running on ${PORT}`));
 
-// DATABASE
-const db = new sqlite3.Database("./erlc.db");
-
-// TABLES
-db.run(`CREATE TABLE IF NOT EXISTS warnings (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  roblox_username TEXT,
-  reason TEXT,
-  staff TEXT,
-  date TEXT
-)`);
-
-db.run(`CREATE TABLE IF NOT EXISTS shifts (
-  staff_id TEXT PRIMARY KEY,
-  start_time INTEGER
-)`);
-
-// READY
-client.once("clientReady", async () => {
-  console.log(`Logged in as ${client.user.tag}`);
-
-  // REGISTER COMMANDS
-  const commands = [
-    new SlashCommandBuilder()
-      .setName("warn")
-      .setDescription("Warn a Roblox player")
-      .addStringOption(o =>
-        o.setName("username")
-          .setDescription("Roblox username")
-          .setRequired(true))
-      .addStringOption(o =>
-        o.setName("reason")
-          .setDescription("Reason")
-          .setRequired(true)),
-
-    new SlashCommandBuilder()
-      .setName("warnings")
-      .setDescription("View warnings for a Roblox player")
-      .addStringOption(o =>
-        o.setName("username")
-          .setDescription("Roblox username")
-          .setRequired(true)),
-
-    new SlashCommandBuilder()
-      .setName("shift")
-      .setDescription("Shift system")
-      .addSubcommand(sc =>
-        sc.setName("start").setDescription("Start your shift"))
-      .addSubcommand(sc =>
-        sc.setName("end").setDescription("End your shift"))
-  ];
-
-  await client.application.commands.set(commands);
+// ======================
+// CLIENT
+// ======================
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
-// PERMISSION CHECK
-function hasPermission(member) {
-  return member.roles.cache.some(r => 
-    r.name === "─────────── High Rank ───────────" || r.name === "Low Rank"
-  );
-}
-// INTERACTIONS
-client.on("interactionCreate", async interaction => {
-  if (!interaction.isChatInputCommand()) return;
+// ======================
+// DATABASE
+// ======================
+const db = new sqlite3.Database('./erlc.db');
+db.serialize(() => {
+  db.run(`CREATE TABLE IF NOT EXISTS warnings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId TEXT,
+    reason TEXT,
+    time TEXT
+  )`);
 
-  const member = interaction.member;
-  if (!hasPermission(member)) {
-    return interaction.reply({ content: "❌ You don’t have permission.", ephemeral: true });
+  db.run(`CREATE TABLE IF NOT EXISTS shifts (
+    userId TEXT PRIMARY KEY,
+    start INTEGER,
+    breakTime INTEGER,
+    status TEXT
+  )`);
+});
+
+// ======================
+// SAFE DEFER (FIX 10062)
+// ======================
+async function safeDefer(interaction) {
+  try {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: true });
+    }
+    return true;
+  } catch {
+    return false;
   }
+}
 
-  const logChannel = interaction.guild.channels.cache.find(c => c.name === "mod-logs");
+// ======================
+// ROLE CHECKS
+// ======================
+function isHighRank(member) {
+  return member.roles.cache.some(r => r.name === '─────────── High Rank ───────────');
+}
+function isLowRank(member) {
+  return member.roles.cache.some(r => r.name === '─────────── Low Rank ───────────');
+}
+
+// ======================
+// EMBED
+// ======================
+function makeEmbed(title, desc, color) {
+  return new EmbedBuilder()
+    .setTitle(title)
+    .setDescription(desc)
+    .setColor(color)
+    .setTimestamp();
+}
+
+// ======================
+// COMMANDS
+// ======================
+const commands = [
+  new SlashCommandBuilder()
+    .setName('warn')
+    .setDescription('Warn a user')
+    .addUserOption(o =>
+      o.setName('user').setDescription('User to warn').setRequired(true))
+    .addStringOption(o =>
+      o.setName('reason').setDescription('Reason').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('warnings')
+    .setDescription('View warnings')
+    .addUserOption(o =>
+      o.setName('user').setDescription('User').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('warnremove')
+    .setDescription('Remove latest warning')
+    .addUserOption(o =>
+      o.setName('user').setDescription('User').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('shift')
+    .setDescription('Shift system')
+    .addSubcommand(s =>
+      s.setName('start').setDescription('Start your shift'))
+    .addSubcommand(s =>
+      s.setName('end').setDescription('End your shift'))
+    .addSubcommand(s =>
+      s.setName('break').setDescription('Go on break'))
+    .addSubcommand(s =>
+      s.setName('resume').setDescription('Resume shift'))
+    .addSubcommand(s =>
+      s.setName('leaderboard').setDescription('View leaderboard'))
+    .addSubcommand(s =>
+      s.setName('adjust')
+        .setDescription('Adjust shift time (High Rank)')
+        .addUserOption(o =>
+          o.setName('user')
+           .setDescription('User to adjust')
+           .setRequired(true))
+        .addIntegerOption(o =>
+          o.setName('minutes')
+           .setDescription('Minutes to add/remove')
+           .setRequired(true)))
+].map(c => c.toJSON());
+
+// ======================
+// REGISTER COMMANDS
+// ======================
+const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+(async () => {
+  await rest.put(
+    Routes.applicationCommands(process.env.CLIENT_ID),
+    { body: commands }
+  );
+  console.log('Commands registered');
+})();
+
+// ======================
+// READY
+// ======================
+client.once('ready', () => {
+  console.log(`Logged in as ${client.user.tag}`);
+});
+
+// ======================
+// INTERACTIONS
+// ======================
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+  const ok = await safeDefer(interaction);
+  if (!ok) return;
+
+  const cmd = interaction.commandName;
+  const member = interaction.member;
 
   // WARN
-  if (interaction.commandName === "warn") {
-    const user = interaction.options.getString("username");
-    const reason = interaction.options.getString("reason");
+  if (cmd === 'warn') {
+    if (!isHighRank(member) && !isLowRank(member))
+      return interaction.editReply({ content: 'No permission.' });
+
+    const user = interaction.options.getUser('user');
+    const reason = interaction.options.getString('reason');
 
     db.run(
-      "INSERT INTO warnings (roblox_username, reason, staff, date) VALUES (?, ?, ?, ?)",
-      [user, reason, interaction.user.tag, new Date().toISOString()]
+      `INSERT INTO warnings (userId, reason, time) VALUES (?, ?, ?)`,
+      [user.id, reason, new Date().toISOString()]
     );
 
-    interaction.reply(`⚠️ **${user}** warned.`);
-    if (logChannel) {
-      logChannel.send(`⚠️ **WARN**\nUser: ${user}\nReason: ${reason}\nBy: ${interaction.user.tag}`);
-    }
-  }
-// WARNINGS
-  if (interaction.commandName === "warnings") {
-    const user = interaction.options.getString("username");
-
-    db.all(
-      "SELECT * FROM warnings WHERE roblox_username = ?",
-      [user],
-      (err, rows) => {
-        if (!rows || rows.length === 0) {
-          return interaction.reply(`✅ **${user}** has no warnings.`);
-        }
-
-        const list = rows.map(w =>
-          `#${w.id} - ${w.reason} (${w.staff})`
-        ).join("\n");
-
-        interaction.reply(`⚠️ Warnings for **${user}**:\n${list}`);
-      }
-    );
+    return interaction.editReply({
+      embeds: [makeEmbed('Warning Issued', `${user}\nReason: ${reason}`, '#FFD700')]
+    });
   }
 
-  // SHIFT START
-  if (interaction.commandName === "shift" && interaction.options.getSubcommand() === "start") {
-    db.run(
-      "INSERT OR REPLACE INTO shifts (staff_id, start_time) VALUES (?, ?)",
-      [interaction.user.id, Date.now()]
-    );
+  // WARNINGS
+  if (cmd === 'warnings') {
+    const user = interaction.options.getUser('user');
+    db.all(`SELECT * FROM warnings WHERE userId=?`, [user.id], (_, rows) => {
+      if (!rows.length)
+        return interaction.editReply({ content: 'No warnings.' });
 
-    interaction.reply("🟢 Shift started.");
-    if (logChannel) {
-      logChannel.send(`🟢 **SHIFT START**\nStaff: ${interaction.user.tag}`);
-    }
+      const text = rows.map(w => `• ${w.reason}`).join('\n');
+      interaction.editReply({
+        embeds: [makeEmbed(`Warnings for ${user.username}`, text, '#FFA500')]
+      });
+    });
   }
 
-  // SHIFT END
-  if (interaction.commandName === "shift" && interaction.options.getSubcommand() === "end") {
+  // WARN REMOVE
+  if (cmd === 'warnremove') {
+    if (!isHighRank(member))
+      return interaction.editReply({ content: 'High Rank only.' });
+
+    const user = interaction.options.getUser('user');
     db.get(
-      "SELECT start_time FROM shifts WHERE staff_id = ?",
-      [interaction.user.id],
-      (err, row) => {
-        if (!row) {
-          return interaction.reply("❌ You don’t have an active shift.");
-        }
-
-        const duration = Math.floor((Date.now() - row.start_time) / 60000);
-        db.run("DELETE FROM shifts WHERE staff_id = ?", [interaction.user.id]);
-
-        interaction.reply(`🔴 Shift ended. Time worked: **${duration} minutes**.`);
-        if (logChannel) {
-          logChannel.send(`🔴 **SHIFT END**\nStaff: ${interaction.user.tag}\nDuration: ${duration} minutes`);
-        }
+      `SELECT id FROM warnings WHERE userId=? ORDER BY id DESC`,
+      [user.id],
+      (_, row) => {
+        if (!row) return interaction.editReply({ content: 'No warnings.' });
+        db.run(`DELETE FROM warnings WHERE id=?`, [row.id]);
+        interaction.editReply({ content: 'Warning removed.' });
       }
     );
+  }
+
+  // SHIFT
+  if (cmd === 'shift') {
+    const sub = interaction.options.getSubcommand();
+    const id = interaction.user.id;
+
+    if (sub === 'start') {
+      db.run(
+        `INSERT OR REPLACE INTO shifts VALUES (?, ?, ?, ?)`,
+        [id, Date.now(), 0, 'On Duty']
+      );
+      return interaction.editReply({ content: 'Shift started.' });
+    }
+
+    if (sub === 'end') {
+      db.get(`SELECT * FROM shifts WHERE userId=?`, [id], (_, row) => {
+        if (!row) return interaction.editReply({ content: 'No active shift.' });
+        const mins = Math.round((Date.now() - row.start) / 60000);
+        db.run(`DELETE FROM shifts WHERE userId=?`, [id]);
+        interaction.editReply({ content: `Shift ended. ${mins} minutes.` });
+      });
+    }
+
+    if (sub === 'leaderboard') {
+      db.all(`SELECT * FROM shifts`, [], (_, rows) => {
+        if (!rows.length)
+          return interaction.editReply({ content: 'No data.' });
+
+        let text = '';
+        rows.forEach(r => {
+          const mins = Math.round((Date.now() - r.start) / 60000);
+          text += `<@${r.userId}> — ${mins} mins\n`;
+        });
+
+        interaction.editReply({
+          embeds: [makeEmbed('Shift Leaderboard', text, '#00FFFF')]
+        });
+      });
+    }
   }
 });
 
-
+// ======================
+// LOGIN
+// ======================
 client.login(process.env.TOKEN);
