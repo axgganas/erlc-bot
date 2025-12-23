@@ -1,4 +1,3 @@
-require('dotenv').config();
 const {
   Client,
   GatewayIntentBits,
@@ -286,3 +285,4 @@ client.on('interactionCreate', async interaction => {
 /* ================= LOGIN ================= */
 
 client.login(TOKEN);
+
