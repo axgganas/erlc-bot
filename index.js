@@ -145,7 +145,8 @@ client.once('ready', async () => {
 /* ================= INTERACTIONS ================= */
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  await interaction.deferReply({ flags: 64 });
+  // Remove ephemeral, visible to everyone
+  await interaction.deferReply({ ephemeral: false });
 
   const member = interaction.member;
 
@@ -162,12 +163,9 @@ client.on('interactionCreate', async interaction => {
     const embed = new EmbedBuilder()
       .setColor(0xffaa00)
       .setTitle('⚠️ Warning Issued')
-      .addFields(
-        { name: 'User', value: `<@${user.id}>` },
-        { name: 'Reason', value: reason },
-        { name: 'Signed By', value: interaction.user.tag }
-      )
-      .setTimestamp();
+      .setDescription(`**User:** <@${user.id}>\n**Reason:** ${reason}\n**Signed By:** ${interaction.user.tag}`)
+      .setTimestamp()
+      .setFooter({ text: 'ERLC Staff Bot' });
 
     return interaction.editReply({ embeds: [embed] });
   }
@@ -183,7 +181,8 @@ client.on('interactionCreate', async interaction => {
       const embed = new EmbedBuilder()
         .setColor(0xff0000)
         .setTitle(`Warnings for ${user.tag}`)
-        .setDescription(rows.map((w, i) => `**${i + 1}.** ${w.reason} — *${w.moderator}*`).join('\n'));
+        .setDescription(rows.map((w, i) => `**${i + 1}.** ${w.reason} — *${w.moderator}*`).join('\n'))
+        .setFooter({ text: 'ERLC Staff Bot' });
 
       interaction.editReply({ embeds: [embed] });
     });
@@ -205,13 +204,9 @@ client.on('interactionCreate', async interaction => {
     const embed = new EmbedBuilder()
       .setColor(interaction.commandName === 'promote' ? 0x00ff99 : 0xff5555)
       .setTitle(interaction.commandName === 'promote' ? '📈 Promotion' : '📉 Demotion')
-      .addFields(
-        { name: 'User', value: `<@${user.id}>` },
-        { name: 'From', value: from.name },
-        { name: 'To', value: to.name },
-        { name: 'Signed By', value: interaction.user.tag }
-      )
-      .setTimestamp();
+      .setDescription(`**User:** <@${user.id}>\n**From:** ${from.name}\n**To:** ${to.name}\n**Signed By:** ${interaction.user.tag}`)
+      .setTimestamp()
+      .setFooter({ text: 'ERLC Staff Bot' });
 
     return interaction.editReply({ embeds: [embed] });
   }
@@ -227,9 +222,11 @@ client.on('interactionCreate', async interaction => {
         .setColor(0x00ccff)
         .setTitle('🟢 Shift Started')
         .addFields(
-          { name: 'User', value: interaction.user.tag },
-          { name: 'Started', value: `<t:${Math.floor(Date.now()/1000)}:R>` }
-        );
+          { name: 'User', value: interaction.user.tag, inline: true },
+          { name: 'Start Time', value: `<t:${Math.floor(Date.now()/1000)}:f>`, inline: true }
+        )
+        .setTimestamp()
+        .setFooter({ text: 'ERLC Staff Bot' });
 
       return interaction.editReply({ embeds: [embed] });
     }
@@ -245,9 +242,12 @@ client.on('interactionCreate', async interaction => {
           .setColor(0xff4444)
           .setTitle('🔴 Shift Ended')
           .addFields(
-            { name: 'User', value: interaction.user.tag },
-            { name: 'Duration', value: formatDuration(duration) }
-          );
+            { name: 'User', value: interaction.user.tag, inline: true },
+            { name: 'Duration', value: formatDuration(duration), inline: true },
+            { name: 'Started At', value: `<t:${Math.floor(row.start_time/1000)}:f>`, inline: true }
+          )
+          .setTimestamp()
+          .setFooter({ text: 'ERLC Staff Bot' });
 
         interaction.editReply({ embeds: [embed] });
       });
@@ -258,9 +258,12 @@ client.on('interactionCreate', async interaction => {
         .setColor(0xffff00)
         .setTitle('☕ On Break')
         .addFields(
-          { name: 'User', value: interaction.user.tag },
-          { name: 'Status', value: 'Currently on break' }
-        );
+          { name: 'User', value: interaction.user.tag, inline: true },
+          { name: 'Status', value: 'Currently on break', inline: true },
+          { name: 'Time', value: `<t:${Math.floor(Date.now()/1000)}:f>`, inline: true }
+        )
+        .setTimestamp()
+        .setFooter({ text: 'ERLC Staff Bot' });
 
       return interaction.editReply({ embeds: [embed] });
     }
