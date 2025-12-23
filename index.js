@@ -1,34 +1,20 @@
-const {
-  Client,
-  GatewayIntentBits,
-  SlashCommandBuilder,
-  REST,
-  Routes,
-  EmbedBuilder,
-  PermissionsBitField
-} = require('discord.js');
+const { Client, GatewayIntentBits, SlashCommandBuilder, REST, Routes, EmbedBuilder } = require('discord.js');
 const sqlite3 = require('sqlite3').verbose();
 const express = require('express');
 
 /* ================= CONFIG ================= */
-
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
 const HIGH_RANK = '─────────── High Rank ───────────';
 const LOW_RANK = '─────────── Low Rank ───────────';
 
-const ON_DUTY = 'On Duty';
-const ON_BREAK = 'On Break';
-
 /* ================= KEEP ALIVE ================= */
-
 const app = express();
 app.get('/', (req, res) => res.send('Bot alive'));
 app.listen(5000, () => console.log('Web server running on port 5000'));
 
 /* ================= CLIENT ================= */
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -37,28 +23,22 @@ const client = new Client({
 });
 
 /* ================= DATABASE ================= */
+const db = new sqlite3.Database('./data.db', () => console.log('Connected to SQLite database.'));
 
-const db = new sqlite3.Database('./data.db', () =>
-  console.log('Connected to SQLite database.')
-);
-
-db.run(`
-CREATE TABLE IF NOT EXISTS warnings (
+db.run(`CREATE TABLE IF NOT EXISTS warnings (
   user_id TEXT,
   reason TEXT,
   moderator TEXT,
   time INTEGER
 )`);
 
-db.run(`
-CREATE TABLE IF NOT EXISTS shifts (
+db.run(`CREATE TABLE IF NOT EXISTS shifts (
   user_id TEXT PRIMARY KEY,
   start_time INTEGER,
   total_time INTEGER DEFAULT 0
 )`);
 
 /* ================= HELPERS ================= */
-
 function hasRole(member, roleName) {
   return member.roles.cache.some(r => r.name === roleName);
 }
@@ -70,55 +50,86 @@ function formatDuration(ms) {
 }
 
 /* ================= COMMANDS ================= */
-
 const commands = [
   new SlashCommandBuilder()
     .setName('warn')
     .setDescription('Warn a user')
     .addUserOption(o =>
-      o.setName('user').setDescription('User').setRequired(true)
+      o.setName('user')
+       .setDescription('The user to warn')
+       .setRequired(true)
     )
     .addStringOption(o =>
-      o.setName('reason').setDescription('Reason').setRequired(true)
+      o.setName('reason')
+       .setDescription('Reason for the warning')
+       .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName('warnings')
-    .setDescription('View warnings')
+    .setDescription('View warnings for a user')
     .addUserOption(o =>
-      o.setName('user').setDescription('User').setRequired(true)
+      o.setName('user')
+       .setDescription('The user to view warnings for')
+       .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName('promote')
     .setDescription('Promote a staff member')
-    .addUserOption(o => o.setName('user').setRequired(true))
-    .addRoleOption(o => o.setName('from').setRequired(true))
-    .addRoleOption(o => o.setName('to').setRequired(true)),
+    .addUserOption(o => 
+      o.setName('user')
+       .setDescription('The user to promote')
+       .setRequired(true)
+    )
+    .addRoleOption(o =>
+      o.setName('from')
+       .setDescription('Current role of the user')
+       .setRequired(true)
+    )
+    .addRoleOption(o =>
+      o.setName('to')
+       .setDescription('Role to promote the user to')
+       .setRequired(true)
+    ),
 
   new SlashCommandBuilder()
     .setName('demote')
     .setDescription('Demote a staff member')
-    .addUserOption(o => o.setName('user').setRequired(true))
-    .addRoleOption(o => o.setName('from').setRequired(true))
-    .addRoleOption(o => o.setName('to').setRequired(true)),
+    .addUserOption(o =>
+      o.setName('user')
+       .setDescription('The user to demote')
+       .setRequired(true)
+    )
+    .addRoleOption(o =>
+      o.setName('from')
+       .setDescription('Current role of the user')
+       .setRequired(true)
+    )
+    .addRoleOption(o =>
+      o.setName('to')
+       .setDescription('Role to demote the user to')
+       .setRequired(true)
+    ),
 
   new SlashCommandBuilder()
     .setName('shift')
     .setDescription('Shift commands')
     .addSubcommand(s =>
-      s.setName('start').setDescription('Start your shift')
+      s.setName('start')
+       .setDescription('Start your shift')
     )
     .addSubcommand(s =>
-      s.setName('end').setDescription('End your shift')
+      s.setName('end')
+       .setDescription('End your shift')
     )
     .addSubcommand(s =>
-      s.setName('break').setDescription('Go on break')
+      s.setName('break')
+       .setDescription('Go on break')
     )
 ];
 
 /* ================= REGISTER ================= */
-
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
@@ -132,10 +143,8 @@ client.once('ready', async () => {
 });
 
 /* ================= INTERACTIONS ================= */
-
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
-
   await interaction.deferReply({ flags: 64 });
 
   const member = interaction.member;
@@ -148,10 +157,7 @@ client.on('interactionCreate', async interaction => {
     const user = interaction.options.getUser('user');
     const reason = interaction.options.getString('reason');
 
-    db.run(
-      `INSERT INTO warnings VALUES (?, ?, ?, ?)`,
-      [user.id, reason, interaction.user.tag, Date.now()]
-    );
+    db.run(`INSERT INTO warnings VALUES (?, ?, ?, ?)`, [user.id, reason, interaction.user.tag, Date.now()]);
 
     const embed = new EmbedBuilder()
       .setColor(0xffaa00)
@@ -170,26 +176,17 @@ client.on('interactionCreate', async interaction => {
   if (interaction.commandName === 'warnings') {
     const user = interaction.options.getUser('user');
 
-    db.all(
-      `SELECT * FROM warnings WHERE user_id = ?`,
-      [user.id],
-      (err, rows) => {
-        if (!rows.length)
-          return interaction.editReply('No warnings.');
+    db.all(`SELECT * FROM warnings WHERE user_id = ?`, [user.id], (err, rows) => {
+      if (!rows.length)
+        return interaction.editReply('No warnings.');
 
-        const embed = new EmbedBuilder()
-          .setColor(0xff0000)
-          .setTitle(`Warnings for ${user.tag}`)
-          .setDescription(
-            rows.map(
-              (w, i) =>
-                `**${i + 1}.** ${w.reason} — *${w.moderator}*`
-            ).join('\n')
-          );
+      const embed = new EmbedBuilder()
+        .setColor(0xff0000)
+        .setTitle(`Warnings for ${user.tag}`)
+        .setDescription(rows.map((w, i) => `**${i + 1}.** ${w.reason} — *${w.moderator}*`).join('\n'));
 
-        interaction.editReply({ embeds: [embed] });
-      }
-    );
+      interaction.editReply({ embeds: [embed] });
+    });
   }
 
   /* ===== PROMOTE / DEMOTE ===== */
@@ -207,11 +204,7 @@ client.on('interactionCreate', async interaction => {
 
     const embed = new EmbedBuilder()
       .setColor(interaction.commandName === 'promote' ? 0x00ff99 : 0xff5555)
-      .setTitle(
-        interaction.commandName === 'promote'
-          ? '📈 Promotion'
-          : '📉 Demotion'
-      )
+      .setTitle(interaction.commandName === 'promote' ? '📈 Promotion' : '📉 Demotion')
       .addFields(
         { name: 'User', value: `<@${user.id}>` },
         { name: 'From', value: from.name },
@@ -228,10 +221,7 @@ client.on('interactionCreate', async interaction => {
     const sub = interaction.options.getSubcommand();
 
     if (sub === 'start') {
-      db.run(
-        `INSERT OR REPLACE INTO shifts VALUES (?, ?, ?)`,
-        [interaction.user.id, Date.now(), 0]
-      );
+      db.run(`INSERT OR REPLACE INTO shifts VALUES (?, ?, ?)`, [interaction.user.id, Date.now(), 0]);
 
       const embed = new EmbedBuilder()
         .setColor(0x00ccff)
@@ -245,27 +235,22 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (sub === 'end') {
-      db.get(
-        `SELECT * FROM shifts WHERE user_id = ?`,
-        [interaction.user.id],
-        (err, row) => {
-          if (!row)
-            return interaction.editReply('No active shift.');
+      db.get(`SELECT * FROM shifts WHERE user_id = ?`, [interaction.user.id], (err, row) => {
+        if (!row) return interaction.editReply('No active shift.');
 
-          const duration = Date.now() - row.start_time;
-          db.run(`DELETE FROM shifts WHERE user_id = ?`, [interaction.user.id]);
+        const duration = Date.now() - row.start_time;
+        db.run(`DELETE FROM shifts WHERE user_id = ?`, [interaction.user.id]);
 
-          const embed = new EmbedBuilder()
-            .setColor(0xff4444)
-            .setTitle('🔴 Shift Ended')
-            .addFields(
-              { name: 'User', value: interaction.user.tag },
-              { name: 'Duration', value: formatDuration(duration) }
-            );
+        const embed = new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle('🔴 Shift Ended')
+          .addFields(
+            { name: 'User', value: interaction.user.tag },
+            { name: 'Duration', value: formatDuration(duration) }
+          );
 
-          interaction.editReply({ embeds: [embed] });
-        }
-      );
+        interaction.editReply({ embeds: [embed] });
+      });
     }
 
     if (sub === 'break') {
@@ -283,6 +268,4 @@ client.on('interactionCreate', async interaction => {
 });
 
 /* ================= LOGIN ================= */
-
 client.login(TOKEN);
-
